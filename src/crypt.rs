@@ -1,5 +1,3 @@
-//#![deny(missing_docs)]
-
 use aead::{AeadCore, AeadInPlace, KeyInit, KeySizeUser};
 use bytes::{BufMut, Bytes, BytesMut};
 use generic_array::GenericArray;
@@ -14,21 +12,23 @@ use rand::{CryptoRng, RngCore};
 
 use super::*;
 
+/// Macro to dispatch the generic functions based on the algorithm id
+/// in the header.
 macro_rules! dispatch {
-    ($f:ident <$($kem:ident)? $(,$g:ident)* >($hdr:ident $(,$arg:ident)* $(,)?)) => {
+    ($(<$pre:ident>)? $f:ident <$($kem:ident)? $(,$g:ident)* >($hdr:ident $(,$arg:ident)* $(,)?)) => {
         match $hdr.kdf_id {
-            HkdfSha256::KDF_ID => dispatch!(inner, $f::<$(|$kem,)? HkdfSha256 $(,$g)*>($hdr $(,$arg)*)),
-            HkdfSha384::KDF_ID => dispatch!(inner, $f::<$(|$kem,)? HkdfSha384 $(,$g)*>($hdr $(,$arg)*)),
-            HkdfSha512::KDF_ID => dispatch!(inner, $f::<$(|$kem,)? HkdfSha512 $(,$g)*>($hdr $(,$arg)*)),
+            HkdfSha256::KDF_ID => dispatch!(inner, $(<$pre>)?$f::<$(|$kem,)? HkdfSha256 $(,$g)*>($hdr $(,$arg)*)),
+            HkdfSha384::KDF_ID => dispatch!(inner, $(<$pre>)?$f::<$(|$kem,)? HkdfSha384 $(,$g)*>($hdr $(,$arg)*)),
+            HkdfSha512::KDF_ID => dispatch!(inner, $(<$pre>)?$f::<$(|$kem,)? HkdfSha512 $(,$g)*>($hdr $(,$arg)*)),
             _ => Err(Error::UnsupportedKdf),
         }
     };
 
-    (inner, $f:ident::<$(|$kem:ident,)? $kdf:ty $(,$g:ident)* >($hdr:ident $(,$arg:ident)* $(,)?)) => {
+    (inner, $(<$pre:ident>)? $f:ident::<$(|$kem:ident,)? $kdf:ty $(,$g:ident)* >($hdr:ident $(,$arg:ident)* $(,)?)) => {
         match $hdr.aead_id {
-            AesGcm128::AEAD_ID => $f::<$($kem,)? $kdf, AesGcm128 $(,$g)*>($hdr $(,$arg)*),
-            AesGcm256::AEAD_ID => $f::<$($kem,)? $kdf, AesGcm256 $(,$g)*>($hdr $(,$arg)*),
-            ChaCha20Poly1305::AEAD_ID => $f::<$($kem,)? $kdf, ChaCha20Poly1305 $(,$g)*>($hdr $(,$arg)*),
+            AesGcm128::AEAD_ID => $($pre::)?$f::<$($kem,)? $kdf, AesGcm128 $(,$g)*>($hdr $(,$arg)*),
+            AesGcm256::AEAD_ID => $($pre::)?$f::<$($kem,)? $kdf, AesGcm256 $(,$g)*>($hdr $(,$arg)*),
+            ChaCha20Poly1305::AEAD_ID => $($pre::)?$f::<$($kem,)? $kdf, ChaCha20Poly1305 $(,$g)*>($hdr $(,$arg)*),
             _ => Err(Error::UnsupportedAead),
         }
     };
@@ -86,57 +86,224 @@ fn encrypt_req_with<KEM: Kem, KDF: Kdf, AEAD: Aead, R: RngCore + CryptoRng>(
     Ok((buf, out_ctx))
 }
 
-pub(crate) fn decrypt_req<KEM: Kem>(
+pub(crate) fn decrypt_req_in_place<KEM: Kem, B: InPlaceMut>(
     hdr: Header,
-    enc_req: BytesMut,
+    enc_req: B,
     priv_key: &<KEM as Kem>::PrivateKey,
-) -> Result<(BytesMut, Ctx)> {
-    dispatch!(decrypt_req_with <KEM> (hdr, enc_req, priv_key))
+) -> Result<(B, Ctx)> {
+    dispatch!(<B> decrypt_req_in_place <KEM> (hdr, enc_req, priv_key))
 }
 
-fn decrypt_req_with<KEM, KDF, AEAD>(
-    hdr: Header,
-    mut enc_req: BytesMut,
-    priv_key: &<KEM as Kem>::PrivateKey,
-) -> Result<(BytesMut, Ctx)>
-where
-    KEM: Kem,
-    KDF: Kdf,
-    AEAD: Aead,
-{
-    // req: [hdr encapped_key encrypted_req tag]
+/// Trait to support in place operations over a mutable buffer. The
+/// method is an associated function because it can benefit from the
+/// internal macros, same reason for the unused header parameter in
+/// response decryption.
+pub trait InPlaceMut: Sized {
+    fn decrypt_req_in_place<KEM, KDF, AEAD>(
+        hdr: Header,
+        buf: Self,
+        priv_key: &<KEM as Kem>::PrivateKey,
+    ) -> Result<(Self, Ctx)>
+    where
+        KEM: Kem,
+        KDF: Kdf,
+        AEAD: Aead;
 
-    let enc_key_len = <KEM as Kem>::EncappedKey::size();
-    let tag_len = AeadTag::<AEAD>::size();
-    if enc_req.len() < Header::SIZE + enc_key_len + tag_len {
-        return Err(Error::InvalidInput);
+    fn decrypt_res_in_place<KDF, AEAD>(
+        _hdr: Header,
+        buf: Self,
+        enc_key: &[u8],
+        secret: &[u8],
+    ) -> Result<Self>
+    where
+        KDF: Kdf,
+        AEAD: Aead;
+}
+
+impl InPlaceMut for BytesMut {
+    fn decrypt_req_in_place<KEM, KDF, AEAD>(
+        hdr: Header,
+        mut buf: BytesMut,
+        priv_key: &<KEM as Kem>::PrivateKey,
+    ) -> Result<(BytesMut, Ctx)>
+    where
+        KEM: Kem,
+        KDF: Kdf,
+        AEAD: Aead,
+    {
+        // buf: [hdr encapped_key encrypted_req tag]
+
+        let enc_key_len = <KEM as Kem>::EncappedKey::size();
+        let tag_len = AeadTag::<AEAD>::size();
+        if buf.len() < Header::SIZE + enc_key_len + tag_len {
+            return Err(Error::InvalidInput);
+        }
+
+        let mut out_ctx = Ctx {
+            hdr,
+            ..Default::default()
+        };
+
+        let _ = buf.split_to(Header::SIZE);
+        let enc_key_bytes = buf.split_to(enc_key_len);
+        let enc_key = <KEM as Kem>::EncappedKey::from_bytes(&enc_key_bytes)?;
+        out_ctx.encapped_key = enc_key_bytes.freeze();
+        let tag_bytes = buf.split_off(buf.len() - tag_len);
+        let tag = AeadTag::from_bytes(&tag_bytes)?;
+
+        let mut info = [0u8; LABEL_REQ.len() + 1 + Header::SIZE];
+        compose_info::<KEM, KDF, AEAD, _>(hdr.cid, LABEL_REQ.as_bytes(), &mut &mut info[..])?;
+
+        let mut recv_ctx =
+            hpke::setup_receiver::<AEAD, KDF, KEM>(&OpModeR::Base, priv_key, &enc_key, &info)?;
+
+        recv_ctx.open_in_place_detached(&mut buf, &[], &tag)?;
+
+        let mut secret = vec![0; aead_key_size::<AEAD>()];
+        recv_ctx.export(LABEL_RES.as_bytes(), &mut secret)?;
+        out_ctx.secret = secret.into();
+
+        Ok((buf, out_ctx))
     }
 
-    let mut out_ctx = Ctx {
-        hdr,
-        ..Default::default()
-    };
+    fn decrypt_res_in_place<KDF, AEAD>(
+        _hdr: Header,
+        mut buf: BytesMut,
+        enc_key: &[u8],
+        secret: &[u8],
+    ) -> Result<BytesMut>
+    where
+        KDF: Kdf,
+        AEAD: Aead,
+    {
+        // buf contains [res_nonce res tag]
+        let res_nonce_size = res_nonce_size::<AEAD>();
+        let tag_size = AeadTag::<AEAD>::size();
+        if buf.len() < res_nonce_size + tag_size {
+            return Err(Error::InvalidInput);
+        }
 
-    let _ = enc_req.split_to(Header::SIZE);
-    let buf = enc_req.split_to(enc_key_len);
-    let enc_key = <KEM as Kem>::EncappedKey::from_bytes(&buf)?;
-    out_ctx.encapped_key = buf.freeze();
-    let buf = enc_req.split_off(enc_req.len() - tag_len);
-    let tag = AeadTag::from_bytes(&buf)?;
+        let res_nonce = buf.split_to(res_nonce_size);
+        let tag = buf.split_off(buf.len() - tag_size);
 
-    let mut info = [0u8; LABEL_REQ.len() + 1 + Header::SIZE];
-    compose_info::<KEM, KDF, AEAD, _>(hdr.cid, LABEL_REQ.as_bytes(), &mut &mut info[..])?;
+        let mut salt = enc_key.to_vec();
+        salt.extend_from_slice(&res_nonce);
+        let (key, nonce) = match <KDF as Kdf>::KDF_ID {
+            HkdfSha256::KDF_ID => {
+                extract_and_expand::<AEAD, <HkdfSha256 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
+                    .map(|(_prk, key, nonce)| (key, nonce))
+            }
+            HkdfSha384::KDF_ID => {
+                extract_and_expand::<AEAD, <HkdfSha384 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
+                    .map(|(_prk, key, nonce)| (key, nonce))
+            }
+            HkdfSha512::KDF_ID => {
+                extract_and_expand::<AEAD, <HkdfSha512 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
+                    .map(|(_prk, key, nonce)| (key, nonce))
+            }
+            _ => return Err(Error::UnsupportedKdf),
+        }?;
 
-    let mut recv_ctx =
-        hpke::setup_receiver::<AEAD, KDF, KEM>(&OpModeR::Base, priv_key, &enc_key, &info)?;
+        let cipher = <AEAD as Aead>::AeadImpl::new(&key);
 
-    recv_ctx.open_in_place_detached(&mut enc_req, &[], &tag)?;
+        cipher
+            .decrypt_in_place_detached(&nonce, &[], &mut buf, GenericArray::from_slice(&tag))
+            .map_err(|_| Error::AeadError)?;
+        Ok(buf)
+    }
+}
 
-    let mut secret = vec![0; aead_key_size::<AEAD>()];
-    recv_ctx.export(LABEL_RES.as_bytes(), &mut secret)?;
-    out_ctx.secret = secret.into();
+impl<'a> InPlaceMut for &'a mut [u8] {
+    fn decrypt_req_in_place<KEM, KDF, AEAD>(
+        hdr: Header,
+        buf: &'a mut [u8],
+        priv_key: &<KEM as Kem>::PrivateKey,
+    ) -> Result<(&'a mut [u8], Ctx)>
+    where
+        KEM: Kem,
+        KDF: Kdf,
+        AEAD: Aead,
+    {
+        // buf: [hdr encapped_key encrypted_req tag]
 
-    Ok((enc_req, out_ctx))
+        let enc_key_len = <KEM as Kem>::EncappedKey::size();
+        let tag_len = AeadTag::<AEAD>::size();
+        if buf.len() < Header::SIZE + enc_key_len + tag_len {
+            return Err(Error::InvalidInput);
+        }
+
+        let mut out_ctx = Ctx {
+            hdr,
+            ..Default::default()
+        };
+
+        let (_, buf) = buf.split_at_mut(Header::SIZE);
+        let (enc_key_bytes, buf) = buf.split_at_mut(enc_key_len);
+        let enc_key = <KEM as Kem>::EncappedKey::from_bytes(enc_key_bytes)?;
+        out_ctx.encapped_key = Bytes::copy_from_slice(enc_key_bytes);
+        let (buf, tag_bytes) = buf.split_at_mut(buf.len() - tag_len);
+        let tag = AeadTag::from_bytes(tag_bytes)?;
+
+        let mut info = [0u8; LABEL_REQ.len() + 1 + Header::SIZE];
+        compose_info::<KEM, KDF, AEAD, _>(hdr.cid, LABEL_REQ.as_bytes(), &mut &mut info[..])?;
+
+        let mut recv_ctx =
+            hpke::setup_receiver::<AEAD, KDF, KEM>(&OpModeR::Base, priv_key, &enc_key, &info)?;
+
+        recv_ctx.open_in_place_detached(buf, &[], &tag)?;
+
+        let mut secret = vec![0; aead_key_size::<AEAD>()];
+        recv_ctx.export(LABEL_RES.as_bytes(), &mut secret)?;
+        out_ctx.secret = secret.into();
+
+        Ok((buf, out_ctx))
+    }
+
+    fn decrypt_res_in_place<KDF, AEAD>(
+        _hdr: Header,
+        buf: &'a mut [u8],
+        enc_key: &[u8],
+        secret: &[u8],
+    ) -> Result<&'a mut [u8]>
+    where
+        KDF: Kdf,
+        AEAD: Aead,
+    {
+        // buf contains [res_nonce res tag]
+        let res_nonce_size = res_nonce_size::<AEAD>();
+        let tag_size = AeadTag::<AEAD>::size();
+        if buf.len() < res_nonce_size + tag_size {
+            return Err(Error::InvalidInput);
+        }
+
+        let (res_nonce, buf) = buf.split_at_mut(res_nonce_size);
+        let (buf, tag) = buf.split_at_mut(buf.len() - tag_size);
+
+        let mut salt = enc_key.to_vec();
+        salt.extend_from_slice(res_nonce);
+        let (key, nonce) = match <KDF as Kdf>::KDF_ID {
+            HkdfSha256::KDF_ID => {
+                extract_and_expand::<AEAD, <HkdfSha256 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
+                    .map(|(_prk, key, nonce)| (key, nonce))
+            }
+            HkdfSha384::KDF_ID => {
+                extract_and_expand::<AEAD, <HkdfSha384 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
+                    .map(|(_prk, key, nonce)| (key, nonce))
+            }
+            HkdfSha512::KDF_ID => {
+                extract_and_expand::<AEAD, <HkdfSha512 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
+                    .map(|(_prk, key, nonce)| (key, nonce))
+            }
+            _ => return Err(Error::UnsupportedKdf),
+        }?;
+
+        let cipher = <AEAD as Aead>::AeadImpl::new(&key);
+
+        cipher
+            .decrypt_in_place_detached(&nonce, &[], buf, GenericArray::from_slice(tag))
+            .map_err(|_| Error::AeadError)?;
+        Ok(buf)
+    }
 }
 
 pub(crate) fn encrypt_res<R: RngCore + CryptoRng>(
@@ -165,26 +332,18 @@ fn encrypt_res_with<KDF: Kdf, AEAD: Aead, R: RngCore + CryptoRng>(
     secret: &[u8],
     rng: &mut R,
 ) -> Result<BytesMut> {
-    // generate random res_nonce
-    // Array cannot be declared with size from const function.
-    let mut res_nonce = vec![0u8; res_nonce_size::<AEAD>()];
-    rng.fill(res_nonce.as_mut_slice());
+    let res_nonce_len = res_nonce_size::<AEAD>();
 
-    // buf contains [enc_key res_nonce res tag]
+    // buf will contain [enc_key res_nonce res tag]
     let mut buf = BytesMut::with_capacity(
-        enc_key.len() + res_nonce.len() + res.len() + AeadTag::<AEAD>::size(),
+        enc_key.len() + res_nonce_len + res.len() + AeadTag::<AEAD>::size(),
     );
     buf.put(enc_key);
-    buf.put(&res_nonce[..]);
-    // buf contains salt now
+    // reserv for nonce, and fill with random data
+    buf.put_bytes(0, res_nonce_len);
+    rng.fill(&mut buf[enc_key.len()..]);
 
-    // let mut res_nonce = [0u8; AEAD_MAX_SIZE];
-    // rng.fill(&mut res_nonce);
-    // let mut salt = enc_key.to_vec();
-    // salt.extend_from_slice(&res_nonce);
-
-    // let (_prk, key, nonce) =
-    //     extract_and_expand::<<HkdfSha256 as Kdf>::HashImpl, Hmac<_>>(&buf, &secret)?;
+    // buf contains salt(enc_key + res_nonce) now
 
     let (key, nonce) = match <KDF as Kdf>::KDF_ID {
         HkdfSha256::KDF_ID => {
@@ -206,7 +365,7 @@ fn encrypt_res_with<KDF: Kdf, AEAD: Aead, R: RngCore + CryptoRng>(
     buf.put(res);
 
     let tag = cipher
-        .encrypt_in_place_detached(&nonce, &[], &mut buf[enc_key.len() + res_nonce.len()..])
+        .encrypt_in_place_detached(&nonce, &[], &mut buf[enc_key.len() + res_nonce_len..])
         .map_err(|_| Error::AeadError)?;
 
     buf.put(tag.as_slice());
@@ -215,64 +374,13 @@ fn encrypt_res_with<KDF: Kdf, AEAD: Aead, R: RngCore + CryptoRng>(
     Ok(buf)
 }
 
-pub(crate) fn decrypt_res(
+pub(crate) fn decrypt_res_in_place<B: InPlaceMut>(
     hdr: Header,
-    enc_res: BytesMut,
+    enc_res: B,
     enc_key: &[u8],
     secret: &[u8],
-) -> Result<BytesMut> {
-    dispatch!(decrypt_res_with_header <> (hdr, enc_res, enc_key, secret))
-}
-
-fn decrypt_res_with_header<KDF: Kdf, AEAD: Aead>(
-    _hdr: Header,
-    enc_res: BytesMut,
-    enc_key: &[u8],
-    secret: &[u8],
-) -> Result<BytesMut> {
-    decrypt_res_with::<KDF, AEAD>(enc_res, enc_key, secret)
-}
-
-fn decrypt_res_with<KDF: Kdf, AEAD: Aead>(
-    mut enc_res: BytesMut,
-    enc_key: &[u8],
-    secret: &[u8],
-) -> Result<BytesMut> {
-    // enc_res contains [res_nonce res tag]
-    let res_nonce_size = res_nonce_size::<AEAD>();
-    let tag_size = AeadTag::<AEAD>::size();
-    if enc_res.len() < res_nonce_size + tag_size {
-        return Err(Error::InvalidInput);
-    }
-
-    let res_nonce = enc_res.split_to(res_nonce_size);
-    let tag = enc_res.split_off(enc_res.len() - tag_size);
-    let mut res = enc_res;
-
-    let mut salt = enc_key.to_vec();
-    salt.extend_from_slice(&res_nonce);
-    let (key, nonce) = match <KDF as Kdf>::KDF_ID {
-        HkdfSha256::KDF_ID => {
-            extract_and_expand::<AEAD, <HkdfSha256 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
-                .map(|(_prk, key, nonce)| (key, nonce))
-        }
-        HkdfSha384::KDF_ID => {
-            extract_and_expand::<AEAD, <HkdfSha384 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
-                .map(|(_prk, key, nonce)| (key, nonce))
-        }
-        HkdfSha512::KDF_ID => {
-            extract_and_expand::<AEAD, <HkdfSha512 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
-                .map(|(_prk, key, nonce)| (key, nonce))
-        }
-        _ => return Err(Error::UnsupportedKdf),
-    }?;
-
-    let cipher = <AEAD as Aead>::AeadImpl::new(&key);
-
-    cipher
-        .decrypt_in_place_detached(&nonce, &[], &mut res, GenericArray::from_slice(&tag))
-        .map_err(|_| Error::AeadError)?;
-    Ok(res)
+) -> Result<B> {
+    dispatch!(<B> decrypt_res_in_place <> (hdr, enc_res, enc_key, secret))
 }
 
 type EEOut<H, A> = (

@@ -7,6 +7,7 @@
 
 use aead::{AeadCore, KeySizeUser};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use core::ops::Deref;
 use generic_array::typenum::Unsigned;
 use hpke::aead::Aead;
 use hpke::kdf::Kdf;
@@ -16,11 +17,10 @@ use rand::Rng;
 use rand::{CryptoRng, RngCore};
 use thiserror::Error as ThisError;
 
-//mod iface;
 pub mod bhttp;
 mod crypt;
 
-use crypt::{decrypt_req, decrypt_res, encrypt_req, encrypt_res};
+use crypt::InPlaceMut;
 
 /// HTTP media type for key config.
 pub const MT_KEY_CONFIG: &str = "application/ohttp-keys";
@@ -201,8 +201,12 @@ impl Config {
     ) -> Result<(BytesMut, Ctx)> {
         let hdr = self.try_as_header(alg_idx)?;
         match &self.pub_key {
-            PubKey::X25519HkdfSha256(k) => encrypt_req::<X25519HkdfSha256, _>(hdr, k, req, rng),
-            PubKey::DhP256HkdfSha256(k) => encrypt_req::<DhP256HkdfSha256, _>(hdr, k, req, rng),
+            PubKey::X25519HkdfSha256(k) => {
+                crypt::encrypt_req::<X25519HkdfSha256, _>(hdr, k, req, rng)
+            }
+            PubKey::DhP256HkdfSha256(k) => {
+                crypt::encrypt_req::<DhP256HkdfSha256, _>(hdr, k, req, rng)
+            }
         }
     }
 
@@ -285,7 +289,9 @@ impl Config {
         }
     }
 
-    fn validate_header(&self, buf: &[u8]) -> Result<Header> {
+    /// Validate a message header that parsed from the given buffer,
+    /// check if it matches current config.
+    pub fn validate_header(&self, buf: &[u8]) -> Result<Header> {
         let hdr = Header::from_slice(buf)?;
         if hdr.cid != self.id {
             return Err(Error::InvalidInput);
@@ -316,16 +322,18 @@ impl Config {
         self.decrypt_req_in_place(buf)
     }
 
-    /// Decrypt the requet in place using the provided BytesMut.
-    pub fn decrypt_req_in_place(&self, enc_req: BytesMut) -> Result<(BytesMut, Ctx)> {
+    /// Decrypt the requet in place using the provided buffer.
+    pub fn decrypt_req_in_place<B>(&self, enc_req: B) -> Result<(B, Ctx)>
+    where
+        B: InPlaceMut + Deref<Target = [u8]>,
+    {
         let hdr = self.validate_header(&enc_req)?;
-
         match self.priv_key.as_ref() {
             Some(PrivKey::X25519HkdfSha256(key)) => {
-                decrypt_req::<X25519HkdfSha256>(hdr, enc_req, key)
+                crypt::decrypt_req_in_place::<X25519HkdfSha256, _>(hdr, enc_req, key)
             }
             Some(PrivKey::DhP256HkdfSha256(key)) => {
-                decrypt_req::<DhP256HkdfSha256>(hdr, enc_req, key)
+                crypt::decrypt_req_in_place::<DhP256HkdfSha256, _>(hdr, enc_req, key)
             }
             None => Err(Error::NoPrivateKey),
         }
@@ -413,7 +421,7 @@ pub struct Ctx {
 impl Ctx {
     /// Used by the server side, encrypt a response.
     pub fn encrypt_res<R: RngCore + CryptoRng>(&self, res: &[u8], rng: &mut R) -> Result<BytesMut> {
-        encrypt_res(self.hdr, res, &self.encapped_key, &self.secret, rng)
+        crypt::encrypt_res(self.hdr, res, &self.encapped_key, &self.secret, rng)
     }
 
     /// Used by the client side, decrypt a response.
@@ -423,8 +431,11 @@ impl Ctx {
     }
 
     /// Used by the client side, decrypt a response in place.
-    pub fn decrypt_res_in_place(&self, enc_res: BytesMut) -> Result<BytesMut> {
-        decrypt_res(self.hdr, enc_res, &self.encapped_key, &self.secret)
+    pub fn decrypt_res_in_place<B>(&self, enc_res: B) -> Result<B>
+    where
+        B: InPlaceMut,
+    {
+        crypt::decrypt_res_in_place::<_>(self.hdr, enc_res, &self.encapped_key, &self.secret)
     }
 
     /// Serialize the context into a given buffer.
@@ -495,19 +506,26 @@ struct SymAlg {
     aead_id: u16,
 }
 
+/// Message header is a low level data representation which contains
+/// various identifiers.
 #[derive(Debug, Clone, Copy, Default)]
-struct Header {
-    cid: u8,
-    kem_id: u16,
-    kdf_id: u16,
-    aead_id: u16,
+pub struct Header {
+    /// Config ID
+    pub cid: u8,
+    /// KEM ID
+    pub kem_id: u16,
+    /// KDF ID
+    pub kdf_id: u16,
+    /// AEAD ID
+    pub aead_id: u16,
 }
 
 impl Header {
     // config id + kem id + kdf id + aead id
     const SIZE: usize = 1 + 2 + 2 + 2;
 
-    fn from_slice(mut buf: &[u8]) -> Result<Self> {
+    /// Try to parse a header from given slice.
+    pub fn from_slice(mut buf: &[u8]) -> Result<Self> {
         if buf.len() < Self::SIZE {
             return Err(Error::InvalidInput);
         }
@@ -679,5 +697,40 @@ mod tests {
             algs: SymAlgs(algs),
         };
         enc_dec_with_config(&conf);
+    }
+
+    #[test]
+    fn in_place_impl() {
+        // create RNG with deterministic seed
+        let mut rng = StdRng::from_seed([0; 32]);
+        let conf = Config::builder()
+            .with_id(1)
+            .gen_keypair(id::KemId::X25519HKDFSHA256, &mut rng)
+            .push_alg(id::KdfId::HKDFSHA256, id::AeadId::AESGCM128)
+            .build()
+            .unwrap();
+
+        let req = b"hello";
+        let (enc_req, cli_ctx) = conf.encrypt_req(0, req, &mut rng).unwrap();
+        let impl_bytes = enc_req.clone();
+        let (dec_req, _srv_ctx) = conf.decrypt_req_in_place(impl_bytes).unwrap();
+        assert_eq!(req, dec_req.as_ref());
+
+        let mut impl_slice: Vec<_> = enc_req.into();
+        let (dec_req, srv_ctx) = conf
+            .decrypt_req_in_place(impl_slice.as_mut_slice())
+            .unwrap();
+        assert_eq!(req, dec_req.as_ref());
+
+        let res = b"world";
+        let enc_res = srv_ctx.encrypt_res(res, &mut rng).unwrap();
+        let impl_bytes = enc_res.clone();
+        let dec_res = cli_ctx.decrypt_res_in_place(impl_bytes).unwrap();
+        assert_eq!(res, dec_res.as_ref());
+        let mut impl_slice: Vec<_> = enc_res.into();
+        let dec_res = cli_ctx
+            .decrypt_res_in_place(impl_slice.as_mut_slice())
+            .unwrap();
+        assert_eq!(res, dec_res.as_ref());
     }
 }
