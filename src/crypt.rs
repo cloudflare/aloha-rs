@@ -139,29 +139,18 @@ impl InPlaceMut for BytesMut {
             return Err(Error::InvalidInput);
         }
 
-        let mut out_ctx = Ctx {
-            hdr,
-            ..Default::default()
-        };
-
         let _ = buf.split_to(Header::SIZE);
         let enc_key_bytes = buf.split_to(enc_key_len);
-        let enc_key = <KEM as Kem>::EncappedKey::from_bytes(&enc_key_bytes)?;
-        out_ctx.encapped_key = enc_key_bytes.freeze();
         let tag_bytes = buf.split_off(buf.len() - tag_len);
-        let tag = AeadTag::from_bytes(&tag_bytes)?;
 
-        let mut info = [0u8; LABEL_REQ.len() + 1 + Header::SIZE];
-        compose_info::<KEM, KDF, AEAD, _>(hdr.cid, LABEL_REQ.as_bytes(), &mut &mut info[..])?;
+        let secret =
+            kem_decap::<KEM, KDF, AEAD>(priv_key, &hdr, &enc_key_bytes, &tag_bytes, &mut buf)?;
 
-        let mut recv_ctx =
-            hpke::setup_receiver::<AEAD, KDF, KEM>(&OpModeR::Base, priv_key, &enc_key, &info)?;
-
-        recv_ctx.open_in_place_detached(&mut buf, &[], &tag)?;
-
-        let mut secret = vec![0; aead_key_size::<AEAD>()];
-        recv_ctx.export(LABEL_RES.as_bytes(), &mut secret)?;
-        out_ctx.secret = secret.into();
+        let out_ctx = Ctx {
+            hdr,
+            encapped_key: enc_key_bytes.freeze(),
+            secret: secret.into(),
+        };
 
         Ok((buf, out_ctx))
     }
@@ -186,29 +175,7 @@ impl InPlaceMut for BytesMut {
         let res_nonce = buf.split_to(res_nonce_size);
         let tag = buf.split_off(buf.len() - tag_size);
 
-        let mut salt = enc_key.to_vec();
-        salt.extend_from_slice(&res_nonce);
-        let (key, nonce) = match <KDF as Kdf>::KDF_ID {
-            HkdfSha256::KDF_ID => {
-                extract_and_expand::<AEAD, <HkdfSha256 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
-                    .map(|(_prk, key, nonce)| (key, nonce))
-            }
-            HkdfSha384::KDF_ID => {
-                extract_and_expand::<AEAD, <HkdfSha384 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
-                    .map(|(_prk, key, nonce)| (key, nonce))
-            }
-            HkdfSha512::KDF_ID => {
-                extract_and_expand::<AEAD, <HkdfSha512 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
-                    .map(|(_prk, key, nonce)| (key, nonce))
-            }
-            _ => return Err(Error::UnsupportedKdf),
-        }?;
-
-        let cipher = <AEAD as Aead>::AeadImpl::new(&key);
-
-        cipher
-            .decrypt_in_place_detached(&nonce, &[], &mut buf, GenericArray::from_slice(&tag))
-            .map_err(|_| Error::AeadError)?;
+        aead_open::<KDF, AEAD>(secret, enc_key, &res_nonce, &mut buf, &tag)?;
         Ok(buf)
     }
 }
@@ -232,29 +199,17 @@ impl<'a> InPlaceMut for &'a mut [u8] {
             return Err(Error::InvalidInput);
         }
 
-        let mut out_ctx = Ctx {
-            hdr,
-            ..Default::default()
-        };
-
         let (_, buf) = buf.split_at_mut(Header::SIZE);
         let (enc_key_bytes, buf) = buf.split_at_mut(enc_key_len);
-        let enc_key = <KEM as Kem>::EncappedKey::from_bytes(enc_key_bytes)?;
-        out_ctx.encapped_key = Bytes::copy_from_slice(enc_key_bytes);
         let (buf, tag_bytes) = buf.split_at_mut(buf.len() - tag_len);
-        let tag = AeadTag::from_bytes(tag_bytes)?;
 
-        let mut info = [0u8; LABEL_REQ.len() + 1 + Header::SIZE];
-        compose_info::<KEM, KDF, AEAD, _>(hdr.cid, LABEL_REQ.as_bytes(), &mut &mut info[..])?;
+        let secret = kem_decap::<KEM, KDF, AEAD>(priv_key, &hdr, enc_key_bytes, tag_bytes, buf)?;
 
-        let mut recv_ctx =
-            hpke::setup_receiver::<AEAD, KDF, KEM>(&OpModeR::Base, priv_key, &enc_key, &info)?;
-
-        recv_ctx.open_in_place_detached(buf, &[], &tag)?;
-
-        let mut secret = vec![0; aead_key_size::<AEAD>()];
-        recv_ctx.export(LABEL_RES.as_bytes(), &mut secret)?;
-        out_ctx.secret = secret.into();
+        let out_ctx = Ctx {
+            hdr,
+            encapped_key: Bytes::copy_from_slice(enc_key_bytes),
+            secret: secret.into(),
+        };
 
         Ok((buf, out_ctx))
     }
@@ -279,31 +234,74 @@ impl<'a> InPlaceMut for &'a mut [u8] {
         let (res_nonce, buf) = buf.split_at_mut(res_nonce_size);
         let (buf, tag) = buf.split_at_mut(buf.len() - tag_size);
 
-        let mut salt = enc_key.to_vec();
-        salt.extend_from_slice(res_nonce);
-        let (key, nonce) = match <KDF as Kdf>::KDF_ID {
-            HkdfSha256::KDF_ID => {
-                extract_and_expand::<AEAD, <HkdfSha256 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
-                    .map(|(_prk, key, nonce)| (key, nonce))
-            }
-            HkdfSha384::KDF_ID => {
-                extract_and_expand::<AEAD, <HkdfSha384 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
-                    .map(|(_prk, key, nonce)| (key, nonce))
-            }
-            HkdfSha512::KDF_ID => {
-                extract_and_expand::<AEAD, <HkdfSha512 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
-                    .map(|(_prk, key, nonce)| (key, nonce))
-            }
-            _ => return Err(Error::UnsupportedKdf),
-        }?;
-
-        let cipher = <AEAD as Aead>::AeadImpl::new(&key);
-
-        cipher
-            .decrypt_in_place_detached(&nonce, &[], buf, GenericArray::from_slice(tag))
-            .map_err(|_| Error::AeadError)?;
+        aead_open::<KDF, AEAD>(secret, enc_key, res_nonce, buf, tag)?;
         Ok(buf)
     }
+}
+
+fn kem_decap<KEM, KDF, AEAD>(
+    priv_key: &<KEM as Kem>::PrivateKey,
+    hdr: &Header,
+    enc_key_bytes: &[u8],
+    tag_bytes: &[u8],
+    buf: &mut [u8],
+) -> Result<Vec<u8>>
+where
+    KEM: Kem,
+    KDF: Kdf,
+    AEAD: Aead,
+{
+    let enc_key = <KEM as Kem>::EncappedKey::from_bytes(enc_key_bytes)?;
+    let tag = AeadTag::from_bytes(tag_bytes)?;
+
+    let mut info = [0u8; LABEL_REQ.len() + 1 + Header::SIZE];
+    compose_info::<KEM, KDF, AEAD, _>(hdr.cid, LABEL_REQ.as_bytes(), &mut &mut info[..])?;
+
+    let mut recv_ctx =
+        hpke::setup_receiver::<AEAD, KDF, KEM>(&OpModeR::Base, priv_key, &enc_key, &info)?;
+
+    recv_ctx.open_in_place_detached(buf, &[], &tag)?;
+
+    // maybe this allocation could be avoided
+    let mut secret = vec![0; aead_key_size::<AEAD>()];
+    recv_ctx.export(LABEL_RES.as_bytes(), &mut secret)?;
+    Ok(secret)
+}
+
+fn aead_open<KDF, AEAD>(
+    secret: &[u8],
+    key: &[u8],
+    nonce: &[u8],
+    buf: &mut [u8],
+    tag: &[u8],
+) -> Result<()>
+where
+    KDF: Kdf,
+    AEAD: Aead,
+{
+    let mut salt = key.to_vec();
+    salt.extend_from_slice(nonce);
+    let (key, nonce) = match <KDF as Kdf>::KDF_ID {
+        HkdfSha256::KDF_ID => {
+            extract_and_expand::<AEAD, <HkdfSha256 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
+                .map(|(_prk, key, nonce)| (key, nonce))
+        }
+        HkdfSha384::KDF_ID => {
+            extract_and_expand::<AEAD, <HkdfSha384 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
+                .map(|(_prk, key, nonce)| (key, nonce))
+        }
+        HkdfSha512::KDF_ID => {
+            extract_and_expand::<AEAD, <HkdfSha512 as Kdf>::HashImpl, Hmac<_>>(&salt, secret)
+                .map(|(_prk, key, nonce)| (key, nonce))
+        }
+        _ => return Err(Error::UnsupportedKdf),
+    }?;
+
+    let cipher = <AEAD as Aead>::AeadImpl::new(&key);
+
+    cipher
+        .decrypt_in_place_detached(&nonce, &[], buf, GenericArray::from_slice(tag))
+        .map_err(|_| Error::AeadError)
 }
 
 pub(crate) fn encrypt_res<R: RngCore + CryptoRng>(
