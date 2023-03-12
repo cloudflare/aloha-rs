@@ -1,5 +1,58 @@
-//! This module implements RFC9292. It has fast chained parser and
-//! builder.
+// Copyright (c) 2022-2023 Cloudflare, Inc.
+// Licensed under the Apache-2.0 license found in the LICENSE file or
+// at http://www.apache.org/licenses/LICENSE-2.0
+
+//! A RFC 9292 implementation that has chained parser and builder to
+//! avoid heap allocation.
+//!
+//! To build a bHTTP message, start with a [`Builder`] and a choice of
+//! [`Framing`], advance the builder by calling vairous `push_`
+//! functions with necessary data, the builder will transit into
+//! another.
+//!
+//! Similar, to parse a bHTTP message, start with a [`Parser`], then
+//! move to the next parser in the chain by calling the `next`
+//! function.
+//!
+//! # Examples
+//! Build a bHTTP request:
+//! ```
+//! use aloha::bhttp::{Builder, Error, Framing};
+//!
+//! # fn main() -> Result<(), Error> {
+//! let mut buf = Vec::new();
+//! Builder::new(&mut buf, Framing::KnownLenReq)
+//!     .push_ctrl(b"GET", b"https", b"www.example.com", b"/hello.txt")?
+//!     .push_headers(&[
+//!         (
+//!             &b"user-agent"[..],
+//!             &b"curl/7.16.3 libcurl/7.16.3 OpenSSL/0.9.7l zlib/1.2.3"[..],
+//!         ),
+//!         (&b"host"[..], &b"www.example.com"[..]),
+//!         (&b"accept-language"[..], &b"en, mi"[..]),
+//!     ])?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Parse a bHTTP response:
+//! ```no_run
+//! use aloha::bhttp::{Error, Framing, Parser};
+//!
+//! # fn main() -> Result<(), Error> {
+//! # let some_buf = &[];
+//! let parser = Parser::new(some_buf);
+//! let req_ctrl = parser.next_req()?;
+//! let ctrl = req_ctrl.get()?;
+//! assert_eq!(b"GET", ctrl.method);
+//! assert_eq!(b"https", ctrl.scheme);
+//! assert_eq!(b"example.com", ctrl.authority);
+//! assert_eq!(b"/", ctrl.path);
+//! let headers = req_ctrl.next()?;
+//! // ...
+//! # Ok(())
+//! # }
+//! ```
 
 use bytes::{Buf, BufMut};
 use thiserror::Error as ThisError;
@@ -7,20 +60,20 @@ use thiserror::Error as ThisError;
 mod builder;
 mod parser;
 
-pub use builder::Builder;
-pub use parser::Parser;
+pub use builder::*;
+pub use parser::*;
 
 const CONTENT_TERMINATOR: u8 = 0x00;
 
 /// Errors used in bHTTP library.
-#[derive(ThisError, Debug, PartialEq, Eq)]
+#[derive(ThisError, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Error {
-    /// Buffer is too short.
-    #[error("Buffer is too short")]
+    /// Provided buffer is too short.
+    #[error("Provided buffer is too short")]
     ShortBuf,
     /// Input data is invalid.
     #[error("Input data is invalid")]
-    InvalidInput, // TODO: granular error
+    InvalidInput,
     /// Unexpected state in message builder.
     #[error("Unexpected state in message builder")]
     UnexpectedBuildState,

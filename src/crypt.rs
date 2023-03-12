@@ -1,3 +1,7 @@
+// Copyright (c) 2022-2023 Cloudflare, Inc.
+// Licensed under the Apache-2.0 license found in the LICENSE file or
+// at http://www.apache.org/licenses/LICENSE-2.0
+
 use aead::{AeadCore, AeadInPlace, KeyInit, KeySizeUser};
 use bytes::{BufMut, Bytes, BytesMut};
 use generic_array::GenericArray;
@@ -99,6 +103,7 @@ pub(crate) fn decrypt_req_in_place<KEM: Kem, B: InPlaceMut>(
 /// internal macros, same reason for the unused header parameter in
 /// response decryption.
 pub trait InPlaceMut: Sized {
+    /// In place decrypt a request.
     fn decrypt_req_in_place<KEM, KDF, AEAD>(
         hdr: Header,
         buf: Self,
@@ -109,6 +114,7 @@ pub trait InPlaceMut: Sized {
         KDF: Kdf,
         AEAD: Aead;
 
+    /// In place decrypt a response.
     fn decrypt_res_in_place<KDF, AEAD>(
         _hdr: Header,
         buf: Self,

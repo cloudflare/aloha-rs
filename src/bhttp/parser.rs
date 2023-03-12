@@ -1,6 +1,9 @@
+// Copyright (c) 2022-2023 Cloudflare, Inc.
+// Licensed under the Apache-2.0 license found in the LICENSE file or
+// at http://www.apache.org/licenses/LICENSE-2.0
+
 // All the iterators are fused, so the consumed len can be accquired
 // later.
-
 use super::*;
 use std::fmt;
 

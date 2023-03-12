@@ -1,9 +1,70 @@
-#![deny(missing_docs)]
-//! Implements draft-ietf-ohai-ohttp-06.
+// Copyright (c) 2022-2023 Cloudflare, Inc.
+// Licensed under the Apache-2.0 license found in the LICENSE file or
+// at http://www.apache.org/licenses/LICENSE-2.0
 
-// TODO:
-//   check all the return error
-//   unify function names
+#![deny(missing_docs)]
+//! This library implements [draft-ietf-ohai-ohttp-06][draft].
+//! 
+//! [draft]: https://datatracker.ietf.org/doc/draft-ietf-ohai-ohttp/06/
+//!
+//! # Quick start
+//!  ```
+//! use aloha::{bhttp, id, Config, Error};
+//! use rand::thread_rng;
+//! 
+//! # fn main() -> Result<(), Error> {
+//! // Some of the crypto functions require a RNG.
+//! let mut rng = thread_rng();
+//! 
+//! // [server] Generates a server side config with selected algorithms.
+//! let srv_conf = Config::builder()
+//!     .with_id(1)
+//!     .gen_keypair(id::KemId::X25519HKDFSHA256, &mut rng)
+//!     .push_alg(id::KdfId::HKDFSHA256, id::AeadId::AESGCM128)
+//!     .build()?;
+//! 
+//! // [server] From the server side config, get a client side one and
+//! // deliver in to the client side after serializaion.
+//! let mut cli_conf_bytes = Vec::new();
+//! srv_conf.get_client().compose(&mut cli_conf_bytes)?;
+//! 
+//! // ... distribute the cli_conf_bytes to the client
+//! 
+//! // [client] Parse the client config from raw bytes.
+//! let cli_conf = Config::parse(&mut cli_conf_bytes.as_slice())?;
+//! 
+//! // [client] Build a bhttp request
+//! let mut req = Vec::new();
+//! bhttp::Builder::new(&mut req, bhttp::Framing::KnownLenReq)
+//!     .push_ctrl(b"GET", b"https", b"example.com", b"/ping")?
+//!     .push_headers(&[("host".as_bytes(), "example.com".as_bytes())])?;
+//! 
+//! // [client] Encrypt the request data and send it to the server.
+//! let (enc_req, cli_ctx) = cli_conf.encrypt_req(0, &req, &mut rng)?;
+//! 
+//! // [server] Use the server side config to decrypt the request.
+//! let (dec_req, srv_ctx) = srv_conf.decrypt_req(&enc_req)?;
+//! assert_eq!(req, dec_req.as_ref());
+//! 
+//! // [server] Parse the bhttp msg.
+//! let parser = bhttp::Parser::new(&dec_req);
+//! let req_ctrl = parser.next_req()?;
+//! let ctrl = req_ctrl.get()?;
+//! assert_eq!(b"GET", ctrl.method);
+//! assert_eq!(b"https", ctrl.scheme);
+//! assert_eq!(b"example.com", ctrl.authority);
+//! assert_eq!(b"/ping", ctrl.path);
+//! let _headers = req_ctrl.next()?;
+//! 
+//! // [server] Use the context to encrypt a (bhttp) response.
+//! let res = b"pong";
+//! let enc_res = srv_ctx.encrypt_res(&res[..], &mut rng)?;
+//! // [client] Use the context to decrypt the response.
+//! let dec_res = cli_ctx.decrypt_res(&enc_res)?;
+//! assert_eq!(&res[..], &dec_res);
+//! # Ok(())
+//! # }
+//! ```
 
 use aead::{AeadCore, KeySizeUser};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -20,7 +81,7 @@ use thiserror::Error as ThisError;
 pub mod bhttp;
 mod crypt;
 
-use crypt::InPlaceMut;
+pub use crypt::InPlaceMut;
 
 /// HTTP media type for key config.
 pub const MT_KEY_CONFIG: &str = "application/ohttp-keys";
@@ -29,7 +90,8 @@ pub const MT_OHTTP_REQ: &str = "message/ohttp-req";
 /// HTTP media type for oHTTP response.
 pub const MT_OHTTP_RES: &str = "message/ohttp-res";
 
-/// Reexport of several HPKE algorithm IDs.
+/// Reexport of several HPKE algorithm IDs that supported by this
+/// library.
 pub mod id {
     use hpke::aead::{Aead, AesGcm128, AesGcm256, ChaCha20Poly1305};
     use hpke::kdf::{self, Kdf};
@@ -73,6 +135,9 @@ const LABEL_RES: &str = "message/bhttp response";
 const LABEL_AEAD_KEY: &str = "key";
 const LABEL_AEAD_NONCE: &str = "nonce";
 
+/// Size of the ikm used to generate the key pair.
+const IKM_SIZE: usize = 32;
+
 const fn aead_key_size<A: Aead>() -> usize {
     <<A as Aead>::AeadImpl as KeySizeUser>::KeySize::USIZE
 }
@@ -89,11 +154,11 @@ const fn res_nonce_size<A: Aead>() -> usize {
     [a, b][(a < b) as usize]
 }
 
-/// Errors used in oHTTP.
+/// Errors used in this library.
 #[derive(ThisError, Debug, Clone)]
 pub enum Error {
-    /// Input data is too short.
-    #[error("Input data is too short")]
+    /// Provided buffer is too short
+    #[error("Provided buffer is too short")]
     ShortBuf,
     /// Input data is invalid.
     #[error("Input data is invalid")]
@@ -107,6 +172,10 @@ pub enum Error {
     /// Aead is not supported.
     #[error("Aead is not supported")]
     UnsupportedAead,
+
+    /// Config ID in message doesn't match current config.
+    #[error("config id mismatch")]
+    ConfigIdMismatch,
 
     /// No private key in config. Happens when calling server side
     /// functions on client config.
@@ -125,13 +194,17 @@ pub enum Error {
     #[error("No symmetric algorithm set provided in config")]
     MissingSymAlg,
 
-    /// Aead is not supported.
+    /// Opaque error from AEAD operations.
     #[error("Aead error")]
     AeadError,
 
     /// Errors from hpke crate.
     #[error(transparent)]
     Hpke(#[from] HpkeError),
+
+    /// Errors from bhttp module.
+    #[error(transparent)]
+    Bhttp(#[from] bhttp::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -157,7 +230,14 @@ fn compose_to<BM: BufMut, B: Buf>(buf: &mut BM, data: B) -> Result<()> {
     Ok(())
 }
 
-/// Unified Config for both client and server.
+/// Config contains necessary parameters to establish a conversation
+/// between a client and a server.
+///
+/// It can encrypt a request with [`Self::encrypt_req`] on the client
+/// side, or decrypt one via [`Self::decrypt_req`] on the server side.
+/// The internal difference between a client and a server config is
+/// that the latter one has the private key. Use [`Self::get_client`]
+/// to drop the private key and get a config for the client.
 #[derive(Clone)]
 pub struct Config {
     id: u8,
@@ -191,8 +271,9 @@ impl Config {
         })
     }
 
-    /// Encrypt a request, return the encrypted data and a context,
-    /// which can be used to decrypt the response later.
+    /// Encrypt a request, and return the encrypted data as well as a
+    /// [context](Ctx), which can be used to decrypt the response
+    /// later.
     pub fn encrypt_req<R: RngCore + CryptoRng>(
         &self,
         alg_idx: usize,
@@ -210,7 +291,7 @@ impl Config {
         }
     }
 
-    /// Parse a client side config from a given buffer.
+    /// Parse a client side config from a given buffer of bytes.
     pub fn parse<B: Buf>(buf: &mut B) -> Result<Self> {
         if buf.remaining() < 1 + 2 {
             return Err(Error::InvalidInput);
@@ -259,10 +340,12 @@ impl Config {
         })
     }
 
-    /// Compose a client side config into given buffer.
+    /// Compose a client side config into given buffer. Note that even
+    /// it is a server side config, the compose method won't write out
+    /// the private key.
     pub fn compose<B: BufMut>(&self, buf: &mut B) -> Result<()> {
         if buf.remaining_mut() < 1 + 2 {
-            return Err(Error::InvalidInput);
+            return Err(Error::ShortBuf);
         }
 
         buf.put_u8(self.id);
@@ -294,7 +377,13 @@ impl Config {
     pub fn validate_header(&self, buf: &[u8]) -> Result<Header> {
         let hdr = Header::from_slice(buf)?;
         if hdr.cid != self.id {
-            return Err(Error::InvalidInput);
+            return Err(Error::ConfigIdMismatch);
+        }
+
+        match &self.pub_key {
+            PubKey::X25519HkdfSha256(_) if hdr.kem_id == X25519HkdfSha256::KEM_ID => (),
+            PubKey::DhP256HkdfSha256(_) if hdr.kem_id == DhP256HkdfSha256::KEM_ID => (),
+            _ => return Err(Error::UnsupportedKem),
         }
 
         let mut found = false;
@@ -308,21 +397,20 @@ impl Config {
         if !found {
             return Err(Error::InvalidInput);
         }
-        match &self.pub_key {
-            PubKey::X25519HkdfSha256(_) if hdr.kem_id == X25519HkdfSha256::KEM_ID => (),
-            PubKey::DhP256HkdfSha256(_) if hdr.kem_id == DhP256HkdfSha256::KEM_ID => (),
-            _ => return Err(Error::InvalidInput),
-        }
+
         Ok(hdr)
     }
 
-    /// Decrypt a request.
+    /// Decrypt a request, and return the plain data as well as a
+    /// [context](Ctx), which can be used to encrypt the response
+    /// later.
     pub fn decrypt_req(&self, enc_req: &[u8]) -> Result<(BytesMut, Ctx)> {
         let buf = BytesMut::from(enc_req);
         self.decrypt_req_in_place(buf)
     }
 
-    /// Decrypt the requet in place using the provided buffer.
+    /// Same as [Self::decrypt_req], but does it in place into the provided
+    /// buffer.
     pub fn decrypt_req_in_place<B>(&self, enc_req: B) -> Result<(B, Ctx)>
     where
         B: InPlaceMut + Deref<Target = [u8]>,
@@ -356,7 +444,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Generate keypair from a given ikm.
+    /// Generate the keypair from a given ikm.
     pub fn gen_keypair_with(mut self, kem: id::KemId, ikm: &[u8]) -> Self {
         match kem {
             id::KemId::X25519HKDFSHA256 => {
@@ -373,10 +461,9 @@ impl ConfigBuilder {
         self
     }
 
-    /// Generate keypair using passed rng.
+    /// Generate keypair using the provided rng.
     pub fn gen_keypair<R: RngCore + CryptoRng>(self, kem: id::KemId, rng: &mut R) -> Self {
-        // TODO: make ikm size configurable
-        let mut ikm = [0u8; 32];
+        let mut ikm = [0u8; IKM_SIZE];
         rng.fill(&mut ikm);
         self.gen_keypair_with(kem, &ikm)
     }
@@ -389,7 +476,7 @@ impl ConfigBuilder {
     }
 
     /// Consume the builder, and generate a config if all the
-    /// information have been provided.
+    /// necessary information have been provided.
     pub fn build(self) -> Result<Config> {
         let id = self.id.ok_or(Error::MissingId)?;
         let pub_key = self.pub_key.ok_or(Error::MissingPublicKey)?;
@@ -410,7 +497,7 @@ impl ConfigBuilder {
 }
 
 /// A context used in either client side or server side to carry
-/// necessary information for handling response later.
+/// necessary information for handling the response later.
 #[derive(Default)]
 pub struct Ctx {
     hdr: Header,
@@ -430,7 +517,7 @@ impl Ctx {
         self.decrypt_res_in_place(buf)
     }
 
-    /// Used by the client side, decrypt a response in place.
+    /// Like [`Self::decrypt_res`], decrypt a response in place.
     pub fn decrypt_res_in_place<B>(&self, enc_res: B) -> Result<B>
     where
         B: InPlaceMut,
@@ -521,8 +608,8 @@ pub struct Header {
 }
 
 impl Header {
-    // config id + kem id + kdf id + aead id
-    const SIZE: usize = 1 + 2 + 2 + 2;
+    /// Wire size in byte of a header.
+    pub const SIZE: usize = 1 + 2 + 2 + 2; //config id + kem id + kdf id + aead id
 
     /// Try to parse a header from given slice.
     pub fn from_slice(mut buf: &[u8]) -> Result<Self> {
@@ -553,7 +640,7 @@ impl Header {
 
     fn compose<B: BufMut>(&self, buf: &mut B) -> Result<()> {
         if buf.remaining_mut() < Self::SIZE {
-            return Err(Error::InvalidInput);
+            return Err(Error::ShortBuf);
         }
 
         buf.put_u8(self.cid);
@@ -573,7 +660,7 @@ where
     B: BufMut,
 {
     if buf.remaining_mut() < Header::SIZE {
-        return Err(Error::InvalidInput);
+        return Err(Error::ShortBuf);
     }
 
     buf.put_u8(cid);
@@ -592,7 +679,7 @@ where
     B: BufMut,
 {
     if buf.remaining_mut() < label.len() + 1 + Header::SIZE {
-        return Err(Error::InvalidInput);
+        return Err(Error::ShortBuf);
     }
 
     buf.put(label);

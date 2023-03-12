@@ -1,19 +1,26 @@
 [package]
-name = "ohttp"
+name = "aloha"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
 authors = ["Anbang Wen <anbang@cloudflare.com>"]
+description = "Low-level Rust implementation of Oblivious HTTP"
+repository = "https://github.com/cloudflare/aloha-rs/"
+keywords = ["ohttp", "bhttp", "privacy", "oblivious"]
+categories = ["network-programming", "cryptography"]
+include = ["/src", "README.md", "LICENSE"]
 
 [dependencies]
-bytes = "1.0"
-hpke = { version = "0.10.0", features = [ "std" ] }
-thiserror = "1.0"
-rand = { version = "0.8", features = [ "std_rng" ], default-features = false }
-hkdf = "0.12"
-generic-array = "0.14"
 aead = "0.5"
+bytes = "1.0"
+generic-array = "0.14"
+hkdf = "0.12"
+hpke = { version = "0.10.0", features = [ "std" ] }
+rand = { version = "0.8", features = [ "std_rng" ], default-features = false }
+thiserror = "1.0"
 
 [dev-dependencies]
 hex-literal = "0.3"
+rand = { version = "0.8", features = [ "std_rng" ] }
 rstest = "0.16"
 x25519-dalek = "2.0.0-pre.1"
