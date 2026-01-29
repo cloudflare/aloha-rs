@@ -3,49 +3,49 @@
 // at http://www.apache.org/licenses/LICENSE-2.0
 
 #![deny(missing_docs)]
-//! This library implements [draft-ietf-ohai-ohttp-06][draft].
-//! 
-//! [draft]: https://datatracker.ietf.org/doc/draft-ietf-ohai-ohttp/06/
+//! This library implements [rfc9458].
+//!
+//! [rfc9458]: https://www.ietf.org/rfc/rfc9458.html
 //!
 //! # Quick start
 //!  ```
 //! use aloha::{bhttp, id, Config, Error};
 //! use rand::thread_rng;
-//! 
+//!
 //! # fn main() -> Result<(), Error> {
 //! // Some of the crypto functions require a RNG.
 //! let mut rng = thread_rng();
-//! 
+//!
 //! // [server] Generates a server side config with selected algorithms.
 //! let srv_conf = Config::builder()
 //!     .with_id(1)
 //!     .gen_keypair(id::KemId::X25519HKDFSHA256, &mut rng)
 //!     .push_alg(id::KdfId::HKDFSHA256, id::AeadId::AESGCM128)
 //!     .build()?;
-//! 
+//!
 //! // [server] From the server side config, get a client side one and
 //! // deliver in to the client side after serializaion.
 //! let mut cli_conf_bytes = Vec::new();
 //! srv_conf.get_client().compose(&mut cli_conf_bytes)?;
-//! 
+//!
 //! // ... distribute the cli_conf_bytes to the client
-//! 
+//!
 //! // [client] Parse the client config from raw bytes.
 //! let cli_conf = Config::parse(&mut cli_conf_bytes.as_slice())?;
-//! 
+//!
 //! // [client] Build a bhttp request
 //! let mut req = Vec::new();
 //! bhttp::Builder::new(&mut req, bhttp::Framing::KnownLenReq)
 //!     .push_ctrl(b"GET", b"https", b"example.com", b"/ping")?
 //!     .push_headers(&[("host".as_bytes(), "example.com".as_bytes())])?;
-//! 
+//!
 //! // [client] Encrypt the request data and send it to the server.
 //! let (enc_req, cli_ctx) = cli_conf.encrypt_req(0, &req, &mut rng)?;
-//! 
+//!
 //! // [server] Use the server side config to decrypt the request.
 //! let (dec_req, srv_ctx) = srv_conf.decrypt_req(&enc_req)?;
 //! assert_eq!(req, dec_req.as_ref());
-//! 
+//!
 //! // [server] Parse the bhttp msg.
 //! let parser = bhttp::Parser::new(&dec_req);
 //! let req_ctrl = parser.next_req()?;
@@ -55,7 +55,7 @@
 //! assert_eq!(b"example.com", ctrl.authority);
 //! assert_eq!(b"/ping", ctrl.path);
 //! let _headers = req_ctrl.next()?;
-//! 
+//!
 //! // [server] Use the context to encrypt a (bhttp) response.
 //! let res = b"pong";
 //! let enc_res = srv_ctx.encrypt_res(&res[..], &mut rng)?;
@@ -258,6 +258,16 @@ impl Config {
             PubKey::X25519HkdfSha256(_) => <X25519HkdfSha256 as Kem>::KEM_ID,
             PubKey::DhP256HkdfSha256(_) => <DhP256HkdfSha256 as Kem>::KEM_ID,
         }
+    }
+
+    /// Get the wire size of a config.
+    fn size(&self) -> usize {
+        let kem_size = match &self.pub_key {
+            PubKey::X25519HkdfSha256(_) => <X25519HkdfSha256 as Kem>::PublicKey::size(),
+            PubKey::DhP256HkdfSha256(_) => <DhP256HkdfSha256 as Kem>::PublicKey::size(),
+        };
+        // 1 (id) + 2 (kem_id) + kem_size + 2 (algs_len) + algs
+        1 + 2 + kem_size + 2 + self.algs.size()
     }
 
     fn try_as_header(&self, i: usize) -> Result<Header> {
@@ -496,6 +506,66 @@ impl ConfigBuilder {
     }
 }
 
+/// A representation of "application/ohttp-keys" described in 3.2.
+pub struct Keys(Vec<Config>);
+
+impl Keys {
+    /// Parse a list of config from a given buffer of bytes.
+    pub fn parse<B: Buf>(mut buf: &mut B) -> Result<Self> {
+        let mut list = vec![];
+        loop {
+            if buf.remaining() == 0 {
+                break;
+            }
+
+            if buf.remaining() < 2 {
+                return Err(Error::InvalidInput);
+            }
+
+            let len = buf.get_u16();
+            let mut config_buf = buf.take(len.into());
+            let c = Config::parse(&mut config_buf)?;
+            list.push(c);
+            buf = config_buf.into_inner();
+        }
+        Ok(Self(list))
+    }
+
+    /// Compose a list of config into given buffer. Note that even
+    /// it is a server side config, the compose method won't write out
+    /// the private key.
+    pub fn compose<B: BufMut>(&self, buf: &mut B) -> Result<()> {
+        for c in self.0.iter() {
+            buf.put_u16(c.size() as u16);
+            c.compose(buf)?;
+        }
+        Ok(())
+    }
+}
+
+impl IntoIterator for Keys {
+    type Item = Config;
+    type IntoIter = <Vec<Config> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl Deref for Keys {
+    type Target = [Config];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0[..]
+    }
+}
+
+impl std::ops::DerefMut for Keys {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0[..]
+    }
+}
+
 /// A context used in either client side or server side to carry
 /// necessary information for handling the response later.
 #[derive(Default)]
@@ -563,6 +633,10 @@ impl SymAlgs {
 
     fn len(&self) -> usize {
         self.0.len() / Self::ITEM_SIZE
+    }
+
+    fn size(&self) -> usize {
+        self.0.len()
     }
 
     // panic when n > self.len()
