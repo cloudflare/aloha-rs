@@ -343,7 +343,7 @@ fn encrypt_res_with<KDF: Kdf, AEAD: Aead, R: RngCore + CryptoRng>(
         enc_key.len() + res_nonce_len + res.len() + AeadTag::<AEAD>::size(),
     );
     buf.put(enc_key);
-    // reserv for nonce, and fill with random data
+    // reserve for nonce, and fill with random data
     buf.put_bytes(0, res_nonce_len);
     rng.fill(&mut buf[enc_key.len()..]);
 

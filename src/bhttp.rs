@@ -2,15 +2,15 @@
 // Licensed under the Apache-2.0 license found in the LICENSE file or
 // at http://www.apache.org/licenses/LICENSE-2.0
 
-//! A RFC 9292 implementation that has chained parser and builder to
+//! An RFC 9292 implementation that has chained parser and builder to
 //! avoid heap allocation.
 //!
 //! To build a bHTTP message, start with a [`Builder`] and a choice of
-//! [`Framing`], advance the builder by calling vairous `push_`
-//! functions with necessary data, the builder will transit into
+//! [`Framing`], advance the builder by calling various `push_`
+//! functions with necessary data, the builder will transition into
 //! another.
 //!
-//! Similar, to parse a bHTTP message, start with a [`Parser`], then
+//! Similarly, to parse a bHTTP message, start with a [`Parser`], then
 //! move to the next parser in the chain by calling the `next`
 //! function.
 //!
@@ -94,7 +94,7 @@ pub enum Framing {
     KnownLenRes = 1,
     /// Indeterminate Length Request
     IndLenReq = 2,
-    /// Indeterminate Length Reponse
+    /// Indeterminate Length Response
     IndLenRes = 3,
 }
 
@@ -196,11 +196,11 @@ impl VarInt {
     fn compose<B: BufMut>(&self, buf: &mut B) -> Result<()> {
         let len = buf.remaining_mut();
         match self.0 {
-            0..=0x3f if len > 0 => buf.put_u8(self.0 as u8),
-            0x40..=0x3fff if len > 1 => buf.put_u16((self.0 | (0b01 << 14)) as u16),
-            0x4000..=0x3fff_ffff if len > 3 => buf.put_u32((self.0 | (0b10 << 30)) as u32),
-            0x4000_0000..=0x3fff_ffff_ffff_ffff if len >= 8 => buf.put_u64(self.0 | (0b11 << 62)),
-            Self::MAX.. => return Err(Error::InvalidInput),
+            0..=0x3f if len >= 1 => buf.put_u8(self.0 as u8),
+            0x40..=0x3fff if len >= 2 => buf.put_u16((self.0 | (0b01 << 14)) as u16),
+            0x4000..=0x3fff_ffff if len >= 4 => buf.put_u32((self.0 | (0b10 << 30)) as u32),
+            0x4000_0000..=Self::MAX if len >= 8 => buf.put_u64(self.0 | (0b11 << 62)),
+            _ if self.0 > Self::MAX => unreachable!("VarInt invariant violated"),
             _ => return Err(Error::ShortBuf),
         }
 

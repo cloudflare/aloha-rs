@@ -24,7 +24,7 @@
 //!     .build()?;
 //!
 //! // [server] From the server side config, get a client side one and
-//! // deliver in to the client side after serializaion.
+//! // deliver it to the client side after serialization.
 //! let mut cli_conf_bytes = Vec::new();
 //! srv_conf.get_client().compose(&mut cli_conf_bytes)?;
 //!
@@ -90,7 +90,7 @@ pub const MT_OHTTP_REQ: &str = "message/ohttp-req";
 /// HTTP media type for oHTTP response.
 pub const MT_OHTTP_RES: &str = "message/ohttp-res";
 
-/// Reexport of several HPKE algorithm IDs that supported by this
+/// Reexport of several HPKE algorithm IDs that are supported by this
 /// library.
 pub mod id {
     use hpke::aead::{Aead, AesGcm128, AesGcm256, ChaCha20Poly1305};
@@ -167,7 +167,7 @@ pub enum Error {
     #[error("Kem is not supported")]
     UnsupportedKem,
     /// Kdf is not supported.
-    #[error("kdf is not supported")]
+    #[error("KDF is not supported")]
     UnsupportedKdf,
     /// Aead is not supported.
     #[error("Aead is not supported")]
@@ -351,7 +351,7 @@ impl Config {
     }
 
     /// Compose a client side config into given buffer. Note that even
-    /// it is a server side config, the compose method won't write out
+    /// if it is a server side config, the compose method won't write out
     /// the private key.
     pub fn compose<B: BufMut>(&self, buf: &mut B) -> Result<()> {
         if buf.remaining_mut() < 1 + 2 {
@@ -510,7 +510,7 @@ impl ConfigBuilder {
 pub struct Keys(Vec<Config>);
 
 impl Keys {
-    /// Parse a list of config from a given buffer of bytes.
+    /// Parse a list of configs from a given buffer of bytes.
     pub fn parse<B: Buf>(mut buf: &mut B) -> Result<Self> {
         let mut list = vec![];
         loop {
@@ -531,8 +531,8 @@ impl Keys {
         Ok(Self(list))
     }
 
-    /// Compose a list of config into given buffer. Note that even
-    /// it is a server side config, the compose method won't write out
+    /// Compose a list of configs into given buffer. Note that even
+    /// if it is a server side config, the compose method won't write out
     /// the private key.
     pub fn compose<B: BufMut>(&self, buf: &mut B) -> Result<()> {
         for c in self.0.iter() {

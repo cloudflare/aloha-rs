@@ -47,7 +47,7 @@ impl<B: BufMut> Builder<B> {
         })
     }
 
-    /// Push informational/final response contral data.
+    /// Push informational/final response control data.
     pub fn push_status(mut self, status: usize) -> Result<InfoBuilder<B>> {
         if self.framing.is_request() {
             return Err(Error::UnexpectedFraming);
@@ -76,7 +76,7 @@ pub struct RCtrlBuilder<B> {
 }
 
 impl<B: BufMut> RCtrlBuilder<B> {
-    /// Push informational/final response contral data.
+    /// Push informational/final response control data.
     pub fn push_status(mut self, status: usize) -> Result<InfoBuilder<B>> {
         VarInt::try_from(status)?.compose(&mut self.buf)?;
         Ok(InfoBuilder {
@@ -271,7 +271,7 @@ impl<B: BufMut> ContentBuilder<B> {
     }
 }
 
-/// Build tailers.
+/// Build trailers.
 pub struct TailerBuilder<B> {
     buf: B,
     framing: Framing,
@@ -279,13 +279,13 @@ pub struct TailerBuilder<B> {
 }
 
 impl<B: BufMut> TailerBuilder<B> {
-    /// Push all tailers at once.
+    /// Push all trailers at once.
     pub fn push_tailers(mut self, fields: &[(&[u8], &[u8])]) -> Result<PaddingBuilder<B>> {
         push_fields(&mut self.buf, self.framing, fields)?;
         Ok(PaddingBuilder { buf: self.buf })
     }
 
-    /// Append a single tailer in indeterminate length mode.
+    /// Append a single trailer in indeterminate length mode.
     pub fn append_tailer(mut self, field: (&[u8], &[u8])) -> Result<Self> {
         if self.framing.known_len() {
             return Err(Error::UnexpectedFraming);

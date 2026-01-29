@@ -2,7 +2,7 @@
 // Licensed under the Apache-2.0 license found in the LICENSE file or
 // at http://www.apache.org/licenses/LICENSE-2.0
 
-// All the iterators are fused, so the consumed len can be accquired
+// All the iterators are fused, so the consumed len can be acquired
 // later.
 use super::*;
 use std::fmt;
@@ -97,7 +97,7 @@ pub struct ReqCtrlParser<'a> {
 
 impl<'a> ReqCtrlParser<'a> {
     /// Parse and return the request control data.
-    pub fn get(&self) -> Result<ReqCtrl> {
+    pub fn get(&self) -> Result<ReqCtrl<'_>> {
         let mut slice = self.slice;
         let method = get_sized(&mut slice)?;
         let scheme = get_sized(&mut slice)?;
@@ -146,7 +146,7 @@ pub struct ResCtrlParser<'a> {
 
 impl<'a> ResCtrlParser<'a> {
     /// Iterator over the informational and final control data.
-    pub fn iter(&self) -> ResCtrlIter {
+    pub fn iter(&self) -> ResCtrlIter<'_> {
         ResCtrlIter {
             slice: self.slice,
             framing: self.framing,
@@ -216,7 +216,7 @@ pub struct HeaderParser<'a> {
 
 impl<'a> HeaderParser<'a> {
     /// Return an iterator over each header.
-    pub fn iter(&self) -> FieldIter {
+    pub fn iter(&self) -> FieldIter<'_> {
         let truncated = self.slice.is_empty();
         FieldIter {
             slice: self.slice,
@@ -246,7 +246,7 @@ pub struct ContentParser<'a> {
 
 impl<'a> ContentParser<'a> {
     /// Return an iterator over each content chunk.
-    pub fn iter(&self) -> ContentIter {
+    pub fn iter(&self) -> ContentIter<'_> {
         let truncated = self.slice.is_empty();
         ContentIter {
             slice: self.slice,
@@ -255,7 +255,7 @@ impl<'a> ContentParser<'a> {
         }
     }
 
-    /// Consume current parser, and return a new one for tailers.
+    /// Consume current parser, and return a new one for trailers.
     pub fn next(self) -> Result<TailerParser<'a>> {
         let mut iter = self.iter();
         let n = consumed!(iter)?;
@@ -302,7 +302,7 @@ impl<'a> Iterator for ContentIter<'a> {
     }
 }
 
-/// Parser for tailer section.
+/// Parser for trailer section.
 #[derive(Clone, Copy)]
 pub struct TailerParser<'a> {
     slice: &'a [u8],
@@ -310,8 +310,8 @@ pub struct TailerParser<'a> {
 }
 
 impl<'a> TailerParser<'a> {
-    /// Return an iterator over each field line in tailer section.
-    pub fn iter(&self) -> FieldIter {
+    /// Return an iterator over each field line in trailer section.
+    pub fn iter(&self) -> FieldIter<'_> {
         let truncated = self.slice.is_empty();
         FieldIter {
             slice: self.slice,
@@ -321,7 +321,7 @@ impl<'a> TailerParser<'a> {
         }
     }
 
-    /// Consume current parser, and return one for parse padding.
+    /// Consume current parser, and return one for parsing padding.
     pub fn next(self) -> Result<PaddingParser<'a>> {
         let mut iter = self.iter();
         let n = consumed!(iter)?;
@@ -342,9 +342,14 @@ impl<'a> PaddingParser<'a> {
     pub fn len(&self) -> usize {
         self.slice.len()
     }
+
+    /// Return whether or not the padding is empty.
+    pub fn is_empty(&self) -> bool {
+        self.slice.is_empty()
+    }
 }
 
-/// Iterator over the fields, used in header, tailer, and
+/// Iterator over the fields, used in header, trailer, and
 /// informational response control data.
 pub struct FieldIter<'a> {
     slice: &'a [u8],
