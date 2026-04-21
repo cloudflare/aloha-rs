@@ -151,8 +151,8 @@ struct VarInt(u64);
 impl VarInt {
     const MAX: u64 = (1 << 62) - 1;
 
-    fn as_usize(&self) -> usize {
-        self.0 as usize
+    fn as_usize(&self) -> Result<usize> {
+        usize::try_from(self.0).map_err(|_| Error::InvalidInput)
     }
 
     fn size(&self) -> usize {

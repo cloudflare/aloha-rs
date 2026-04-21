@@ -179,7 +179,10 @@ impl<'a> Iterator for ResCtrlIter<'a> {
             return None;
         }
 
-        let status = iter_bail!(self, VarInt::parse(&mut self.slice)).as_usize();
+        let status = iter_bail!(
+            self,
+            VarInt::parse(&mut self.slice).and_then(|v| v.as_usize())
+        );
         iter_bail!(self, validate_status(status));
 
         if is_final_ctrl(status) {
@@ -373,7 +376,7 @@ impl<'a> Iterator for FieldIter<'a> {
             let mut len = match self.len {
                 None => {
                     match VarInt::parse(&mut self.slice).and_then(|n| {
-                        let n = n.as_usize();
+                        let n = n.as_usize()?;
                         if self.slice.len() < n {
                             Err(Error::ShortBuf)
                         } else {
@@ -428,7 +431,7 @@ impl<'a> Iterator for FieldIter<'a> {
 }
 
 fn get_sized<'a>(slice: &mut &'a [u8]) -> Result<&'a [u8]> {
-    let len = VarInt::parse(slice)?.as_usize();
+    let len = VarInt::parse(slice)?.as_usize()?;
     if slice.remaining() < len {
         return Err(Error::ShortBuf);
     }
