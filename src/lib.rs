@@ -156,6 +156,7 @@ const fn res_nonce_size<A: Aead>() -> usize {
 
 /// Errors used in this library.
 #[derive(ThisError, Debug, Clone)]
+#[non_exhaustive]
 pub enum Error {
     /// Provided buffer is too short
     #[error("Provided buffer is too short")]

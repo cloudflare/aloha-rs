@@ -67,6 +67,7 @@ const CONTENT_TERMINATOR: u8 = 0x00;
 
 /// Errors used in bHTTP library.
 #[derive(ThisError, Debug, PartialEq, Eq, Clone, Copy)]
+#[non_exhaustive]
 pub enum Error {
     /// Provided buffer is too short.
     #[error("Provided buffer is too short")]
