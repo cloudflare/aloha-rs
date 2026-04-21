@@ -368,7 +368,9 @@ impl Config {
         if buf.remaining_mut() < 2 {
             return Err(Error::ShortBuf);
         }
-        buf.put_u16((self.algs.len() * SymAlgs::ITEM_SIZE) as u16);
+        buf.put_u16(
+            u16::try_from(self.algs.len() * SymAlgs::ITEM_SIZE).map_err(|_| Error::InvalidInput)?,
+        );
         compose_to(buf, self.algs.0.as_ref())?;
         Ok(())
     }
@@ -540,7 +542,7 @@ impl Keys {
     /// the private key.
     pub fn compose<B: BufMut>(&self, buf: &mut B) -> Result<()> {
         for c in self.0.iter() {
-            buf.put_u16(c.size() as u16);
+            buf.put_u16(u16::try_from(c.size()).map_err(|_| Error::InvalidInput)?);
             c.compose(buf)?;
         }
         Ok(())
