@@ -528,6 +528,9 @@ impl Keys {
             let len = buf.get_u16();
             let mut config_buf = buf.take(len.into());
             let c = Config::parse(&mut config_buf)?;
+            if config_buf.remaining() != 0 {
+                return Err(Error::InvalidInput);
+            }
             list.push(c);
             buf = config_buf.into_inner();
         }
