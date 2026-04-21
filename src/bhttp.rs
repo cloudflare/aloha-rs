@@ -141,8 +141,9 @@ impl VarInt {
         match self.0 {
             0..=0x3f => 1,
             0x40..=0x3fff => 2,
-            0x4000..=0x3fff_ffff => 3,
-            0x4000_0000.. => 4,
+            0x4000..=0x3fff_ffff => 4,
+            0x4000_0000..=Self::MAX => 8,
+            _ => unreachable!("VarInt invariant violated"),
         }
     }
 }
