@@ -124,9 +124,7 @@ impl<B: BufMut> InfoBuilder<B> {
         }
 
         let (mut name, mut value) = field;
-        if name.is_empty() {
-            return Err(Error::InvalidInput);
-        }
+        validate_field_name(name)?;
         compose_len_bytes(&mut self.buf, &mut name)?;
         compose_len_bytes(&mut self.buf, &mut value)?;
         self.appending = true;
@@ -193,9 +191,7 @@ impl<B: BufMut> HeaderBuilder<B> {
         }
 
         let (mut name, mut value) = field;
-        if name.is_empty() {
-            return Err(Error::InvalidInput);
-        }
+        validate_field_name(name)?;
         compose_len_bytes(&mut self.buf, &mut name)?;
         compose_len_bytes(&mut self.buf, &mut value)?;
         self.appending = true;
@@ -295,9 +291,7 @@ impl<B: BufMut> TailerBuilder<B> {
         }
 
         let (mut name, mut value) = field;
-        if name.is_empty() {
-            return Err(Error::InvalidInput);
-        }
+        validate_field_name(name)?;
         compose_len_bytes(&mut self.buf, &mut name)?;
         compose_len_bytes(&mut self.buf, &mut value)?;
         self.appending = true;
@@ -345,9 +339,7 @@ fn push_fields<B: BufMut>(buf: &mut B, framing: Framing, fields: &[(&[u8], &[u8]
 fn push_fields_with_len<B: BufMut>(buf: &mut B, fields: &[(&[u8], &[u8])]) -> Result<()> {
     let mut len = 0;
     for (name, value) in fields.iter() {
-        if name.is_empty() {
-            return Err(Error::InvalidInput);
-        }
+        validate_field_name(name)?;
         len += VarInt::try_from(name.len())?.size();
         len += name.len();
         len += VarInt::try_from(value.len())?.size();
@@ -371,9 +363,7 @@ fn push_fields_with_len<B: BufMut>(buf: &mut B, fields: &[(&[u8], &[u8])]) -> Re
 
 fn push_fields_no_len<B: BufMut>(buf: &mut B, fields: &[(&[u8], &[u8])]) -> Result<()> {
     for (mut name, mut value) in fields.iter() {
-        if name.is_empty() {
-            return Err(Error::InvalidInput);
-        }
+        validate_field_name(name)?;
         compose_len_bytes(buf, &mut name)?;
         compose_len_bytes(buf, &mut value)?;
     }

@@ -131,6 +131,15 @@ fn validate_status(status: usize) -> Result<()> {
     Ok(())
 }
 
+/// RFC 9292 §3.6: field name MUST be non-empty and MUST NOT start
+/// with ':' (pseudo-headers belong only in control data).
+fn validate_field_name(name: &[u8]) -> Result<()> {
+    if name.is_empty() || name[0] == b':' {
+        return Err(Error::InvalidInput);
+    }
+    Ok(())
+}
+
 fn is_final_ctrl(status: usize) -> bool {
     status >= 200
 }
