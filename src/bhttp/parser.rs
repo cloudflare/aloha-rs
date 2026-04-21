@@ -325,9 +325,12 @@ impl<'a> TailerParser<'a> {
     pub fn next(self) -> Result<PaddingParser<'a>> {
         let mut iter = self.iter();
         let n = consumed!(iter)?;
-        Ok(PaddingParser {
-            slice: &self.slice[n..],
-        })
+        let padding = &self.slice[n..];
+        // RFC 9292 §3.8: padding bytes MUST be zero.
+        if padding.iter().any(|&b| b != 0) {
+            return Err(Error::InvalidInput);
+        }
+        Ok(PaddingParser { slice: padding })
     }
 }
 
