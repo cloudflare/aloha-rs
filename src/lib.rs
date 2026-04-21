@@ -341,6 +341,9 @@ impl Config {
         if rem != 0 {
             return Err(Error::InvalidInput);
         }
+        if buf.remaining() < algs_len as usize {
+            return Err(Error::InvalidInput);
+        }
         let algs = SymAlgs(buf.copy_to_bytes(algs_len as usize));
         Ok(Self {
             id,
