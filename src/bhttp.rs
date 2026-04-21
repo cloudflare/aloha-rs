@@ -123,6 +123,14 @@ impl TryFrom<u8> for Framing {
     }
 }
 
+/// RFC 9292 §3.5.1: informational 100..=199, final 200..=599.
+fn validate_status(status: usize) -> Result<()> {
+    if !(100..=599).contains(&status) {
+        return Err(Error::InvalidInput);
+    }
+    Ok(())
+}
+
 fn is_final_ctrl(status: usize) -> bool {
     status >= 200
 }

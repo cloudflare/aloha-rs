@@ -53,6 +53,8 @@ impl<B: BufMut> Builder<B> {
             return Err(Error::UnexpectedFraming);
         }
 
+        validate_status(status)?;
+
         if !self.buf.has_remaining_mut() {
             return Err(Error::ShortBuf);
         }
@@ -78,6 +80,7 @@ pub struct RCtrlBuilder<B> {
 impl<B: BufMut> RCtrlBuilder<B> {
     /// Push informational/final response control data.
     pub fn push_status(mut self, status: usize) -> Result<InfoBuilder<B>> {
+        validate_status(status)?;
         VarInt::try_from(status)?.compose(&mut self.buf)?;
         Ok(InfoBuilder {
             buf: self.buf,

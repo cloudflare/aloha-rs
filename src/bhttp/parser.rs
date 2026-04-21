@@ -180,6 +180,7 @@ impl<'a> Iterator for ResCtrlIter<'a> {
         }
 
         let status = iter_bail!(self, VarInt::parse(&mut self.slice)).as_usize();
+        iter_bail!(self, validate_status(status));
 
         if is_final_ctrl(status) {
             self.done = true;
