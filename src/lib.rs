@@ -510,7 +510,13 @@ impl ConfigBuilder {
     }
 }
 
-/// A representation of "application/ohttp-keys" described in 3.2.
+/// A representation of "application/ohttp-keys" described in
+/// RFC 9458 §3.2: a list of key configurations, each prefixed with
+/// a big-endian 2-byte length on the wire.
+///
+/// Use [`Keys::parse`] and [`Keys::compose`] to convert to/from the
+/// wire format. Construct programmatically via [`From<Vec<Config>>`].
+#[derive(Clone, Default)]
 pub struct Keys(Vec<Config>);
 
 impl Keys {
@@ -547,6 +553,18 @@ impl Keys {
             c.compose(buf)?;
         }
         Ok(())
+    }
+}
+
+impl From<Vec<Config>> for Keys {
+    fn from(configs: Vec<Config>) -> Self {
+        Self(configs)
+    }
+}
+
+impl FromIterator<Config> for Keys {
+    fn from_iter<I: IntoIterator<Item = Config>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
     }
 }
 
