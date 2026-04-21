@@ -333,18 +333,16 @@ impl Config {
         if buf.remaining() < 2 {
             return Err(Error::InvalidInput);
         }
-        let algs_len = buf.get_u16();
-        let (_, rem) = (
-            algs_len as usize / SymAlgs::ITEM_SIZE,
-            algs_len as usize % SymAlgs::ITEM_SIZE,
-        );
-        if rem != 0 {
+        let algs_len = buf.get_u16() as usize;
+        // RFC 9458 §3.1: at least one KDF/AEAD pair (4 bytes) and
+        // length must be a multiple of 4.
+        if algs_len < SymAlgs::ITEM_SIZE || algs_len % SymAlgs::ITEM_SIZE != 0 {
             return Err(Error::InvalidInput);
         }
-        if buf.remaining() < algs_len as usize {
+        if buf.remaining() < algs_len {
             return Err(Error::InvalidInput);
         }
-        let algs = SymAlgs(buf.copy_to_bytes(algs_len as usize));
+        let algs = SymAlgs(buf.copy_to_bytes(algs_len));
         Ok(Self {
             id,
             pub_key: public_key,
