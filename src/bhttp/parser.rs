@@ -400,7 +400,12 @@ impl<'a> Iterator for FieldIter<'a> {
             if r.is_err() {
                 self.done = true;
             } else {
-                len -= n - self.slice.len();
+                let consumed = n - self.slice.len();
+                if consumed > len {
+                    self.done = true;
+                    return Some(Err(Error::InvalidInput));
+                }
+                len -= consumed;
                 self.len = Some(len);
             }
             Some(r)
