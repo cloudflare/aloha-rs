@@ -342,6 +342,9 @@ fn push_fields<B: BufMut>(buf: &mut B, framing: Framing, fields: &[(&[u8], &[u8]
 fn push_fields_with_len<B: BufMut>(buf: &mut B, fields: &[(&[u8], &[u8])]) -> Result<()> {
     let mut len = 0;
     for (name, value) in fields.iter() {
+        if name.is_empty() {
+            return Err(Error::InvalidInput);
+        }
         len += VarInt::try_from(name.len())?.size();
         len += name.len();
         len += VarInt::try_from(value.len())?.size();

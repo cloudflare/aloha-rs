@@ -443,7 +443,12 @@ fn is_terminator(slice: &mut &[u8]) -> Result<bool> {
 }
 
 fn parse_field<'a>(slice: &mut &'a [u8]) -> Result<(&'a [u8], &'a [u8])> {
-    Ok((get_sized(slice)?, get_sized(slice)?))
+    let name = get_sized(slice)?;
+    // RFC 9292 §3.6: field name length MUST be greater than zero.
+    if name.is_empty() {
+        return Err(Error::InvalidInput);
+    }
+    Ok((name, get_sized(slice)?))
 }
 
 impl<'a> fmt::Display for Parser<'a> {
