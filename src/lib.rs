@@ -710,6 +710,7 @@ struct SymAlg {
 /// Message header is a low level data representation which contains
 /// various identifiers.
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct Header {
     /// Config ID
     pub cid: u8,
