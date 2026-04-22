@@ -51,22 +51,28 @@ impl<'a> Parser<'a> {
         Self { slice }
     }
 
-    /// Parse the framing from the buffer.
+    /// Parse the framing indicator as a varint (RFC 9292 §3.3).
+    fn parse_framing(&mut self) -> Result<Framing> {
+        let v = VarInt::parse(&mut self.slice)?;
+        let b = u8::try_from(v.as_usize()?).map_err(|_| Error::InvalidInput)?;
+        Framing::try_from(b)
+    }
+
+    /// Peek at the framing indicator without consuming it.
     pub fn framing(&self) -> Result<Framing> {
-        if self.slice.is_empty() {
-            return Err(Error::ShortBuf);
-        }
-        Framing::try_from(self.slice[0])
+        let mut peek = self.slice;
+        let v = VarInt::parse(&mut peek)?;
+        let b = u8::try_from(v.as_usize()?).map_err(|_| Error::InvalidInput)?;
+        Framing::try_from(b)
     }
 
     /// Consume the parser, and convert it into a request control data
     /// parser.
     pub fn next_req(mut self) -> Result<ReqCtrlParser<'a>> {
-        let framing = self.framing()?;
+        let framing = self.parse_framing()?;
         if !framing.is_request() {
             return Err(Error::UnexpectedFraming);
         }
-        self.slice.advance(1);
         Ok(ReqCtrlParser {
             slice: self.slice,
             framing,
@@ -76,11 +82,10 @@ impl<'a> Parser<'a> {
     /// Consume the parser, and convert it into a response control data
     /// parser.
     pub fn next_res(mut self) -> Result<ResCtrlParser<'a>> {
-        let framing = self.framing()?;
+        let framing = self.parse_framing()?;
         if framing.is_request() {
             return Err(Error::UnexpectedFraming);
         }
-        self.slice.advance(1);
         Ok(ResCtrlParser {
             slice: self.slice,
             framing,
