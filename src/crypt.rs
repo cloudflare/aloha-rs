@@ -77,9 +77,8 @@ fn encrypt_req_with<KEM: Kem, KDF: Kdf, AEAD: Aead, R: RngCore + CryptoRng>(
 
     buf.put(tag.to_bytes().as_ref());
 
-    // let secret: GenericArray<u8, <<AEAD as Aead>::AeadImpl as KeySizeUser>::KeySize> =
-    //     Default::default();
-    let mut secret = vec![0; aead_key_size::<AEAD>()];
+    // RFC 9458 §4.4: secret = Export("message/bhttp response", max(Nn, Nk))
+    let mut secret = vec![0; res_nonce_size::<AEAD>()];
     ctx.export(LABEL_RES.as_bytes(), &mut secret)?;
 
     let out_ctx = Ctx {
@@ -268,8 +267,8 @@ where
 
     recv_ctx.open_in_place_detached(buf, &[], &tag)?;
 
-    // maybe this allocation could be avoided
-    let mut secret = vec![0; aead_key_size::<AEAD>()];
+    // RFC 9458 §4.4: secret = Export("message/bhttp response", max(Nn, Nk))
+    let mut secret = vec![0; res_nonce_size::<AEAD>()];
     recv_ctx.export(LABEL_RES.as_bytes(), &mut secret)?;
     Ok(secret)
 }
