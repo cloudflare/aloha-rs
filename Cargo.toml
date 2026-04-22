@@ -2,6 +2,7 @@
 name = "aloha"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.63"
 license = "Apache-2.0"
 authors = ["Anbang Wen <anbang@cloudflare.com>"]
 description = "Low-level Rust implementation of Oblivious HTTP"

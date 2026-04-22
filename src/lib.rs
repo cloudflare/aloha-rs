@@ -3,6 +3,7 @@
 // at http://www.apache.org/licenses/LICENSE-2.0
 
 #![deny(missing_docs)]
+#![allow(clippy::manual_is_multiple_of)]
 //! Low-level Rust implementation of [Oblivious HTTP (RFC 9458)][rfc9458]
 //! and [Binary HTTP (RFC 9292)][rfc9292].
 //!
@@ -344,7 +345,7 @@ impl Config {
         let algs_len = buf.get_u16() as usize;
         // RFC 9458 §3.1: at least one KDF/AEAD pair (4 bytes) and
         // length must be a multiple of 4.
-        if algs_len < SymAlgs::ITEM_SIZE || !algs_len.is_multiple_of(SymAlgs::ITEM_SIZE) {
+        if algs_len < SymAlgs::ITEM_SIZE || algs_len % SymAlgs::ITEM_SIZE != 0 {
             return Err(Error::InvalidInput);
         }
         if buf.remaining() < algs_len {
