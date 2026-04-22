@@ -337,7 +337,7 @@ impl Config {
         let algs_len = buf.get_u16() as usize;
         // RFC 9458 §3.1: at least one KDF/AEAD pair (4 bytes) and
         // length must be a multiple of 4.
-        if algs_len < SymAlgs::ITEM_SIZE || algs_len % SymAlgs::ITEM_SIZE != 0 {
+        if algs_len < SymAlgs::ITEM_SIZE || !algs_len.is_multiple_of(SymAlgs::ITEM_SIZE) {
             return Err(Error::InvalidInput);
         }
         if buf.remaining() < algs_len {
@@ -913,17 +913,17 @@ mod tests {
         let (dec_req, srv_ctx) = conf
             .decrypt_req_in_place(impl_slice.as_mut_slice())
             .unwrap();
-        assert_eq!(req, dec_req.as_ref());
+        assert_eq!(req, &*dec_req);
 
         let res = b"world";
         let enc_res = srv_ctx.encrypt_res(res, &mut rng).unwrap();
         let impl_bytes = enc_res.clone();
         let dec_res = cli_ctx.decrypt_res_in_place(impl_bytes).unwrap();
-        assert_eq!(res, dec_res.as_ref());
+        assert_eq!(res, &*dec_res);
         let mut impl_slice: Vec<_> = enc_res.into();
         let dec_res = cli_ctx
             .decrypt_res_in_place(impl_slice.as_mut_slice())
             .unwrap();
-        assert_eq!(res, dec_res.as_ref());
+        assert_eq!(res, &*dec_res);
     }
 }
