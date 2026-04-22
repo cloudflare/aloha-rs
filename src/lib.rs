@@ -3,9 +3,16 @@
 // at http://www.apache.org/licenses/LICENSE-2.0
 
 #![deny(missing_docs)]
-//! This library implements [rfc9458].
+//! Low-level Rust implementation of [Oblivious HTTP (RFC 9458)][rfc9458]
+//! and [Binary HTTP (RFC 9292)][rfc9292].
 //!
-//! [rfc9458]: https://www.ietf.org/rfc/rfc9458.html
+//! The [`bhttp`] module provides a zero-allocation chained parser and
+//! builder for Binary HTTP messages. The top-level module provides
+//! OHTTP key configuration ([`Config`], [`Keys`]) and request/response
+//! encapsulation ([`Ctx`]).
+//!
+//! [rfc9458]: https://www.rfc-editor.org/rfc/rfc9458.html
+//! [rfc9292]: https://www.rfc-editor.org/rfc/rfc9292.html
 //!
 //! # Quick start
 //!  ```
