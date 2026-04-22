@@ -495,8 +495,13 @@ impl ConfigBuilder {
         let id = self.id.ok_or(Error::MissingId)?;
         let pub_key = self.pub_key.ok_or(Error::MissingPublicKey)?;
         let priv_key = self.priv_key;
-        let algs = if self.algs.is_empty() {
+        // RFC 9458 §3.1: symmetric algs byte length must be
+        // ITEM_SIZE..=MAX_BYTE_LEN.
+        let algs_len = self.algs.len();
+        let algs = if algs_len == 0 {
             Err(Error::MissingSymAlg)
+        } else if algs_len > SymAlgs::MAX_BYTE_LEN {
+            Err(Error::InvalidInput)
         } else {
             Ok(SymAlgs(self.algs.freeze()))
         }?;
@@ -655,6 +660,8 @@ struct SymAlgs(Bytes);
 
 impl SymAlgs {
     const ITEM_SIZE: usize = 4;
+    /// RFC 9458 §3.1: largest multiple of ITEM_SIZE that fits in a u16.
+    const MAX_BYTE_LEN: usize = u16::MAX as usize - u16::MAX as usize % Self::ITEM_SIZE;
 
     fn len(&self) -> usize {
         self.0.len() / Self::ITEM_SIZE
