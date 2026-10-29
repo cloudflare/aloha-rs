@@ -18,11 +18,11 @@
 //! # Quick start
 //!  ```
 //! use aloha::{bhttp, id, Config, Error};
-//! use rand::thread_rng;
+//! use rand::rng;
 //!
 //! # fn main() -> Result<(), Error> {
 //! // Some of the crypto functions require a RNG.
-//! let mut rng = thread_rng();
+//! let mut rng = rng();
 //!
 //! // [server] Generates a server side config with selected algorithms.
 //! let srv_conf = Config::builder()
@@ -77,13 +77,12 @@
 use aead::{AeadCore, KeySizeUser};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use core::ops::Deref;
-use generic_array::typenum::Unsigned;
 use hpke::aead::Aead;
 use hpke::kdf::Kdf;
 use hpke::kem::{DhP256HkdfSha256, Kem, X25519HkdfSha256};
 use hpke::{Deserializable, HpkeError, Serializable};
-use rand::Rng;
-use rand::{CryptoRng, RngCore};
+use hybrid_array::typenum::Unsigned;
+use rand::CryptoRng;
 use thiserror::Error as ThisError;
 
 pub mod bhttp;
@@ -293,7 +292,7 @@ impl Config {
     /// Encrypt a request, and return the encrypted data as well as a
     /// [context](Ctx), which can be used to decrypt the response
     /// later.
-    pub fn encrypt_req<R: RngCore + CryptoRng>(
+    pub fn encrypt_req<R: CryptoRng>(
         &self,
         alg_idx: usize,
         req: &[u8],
@@ -484,9 +483,9 @@ impl ConfigBuilder {
     }
 
     /// Generate keypair using the provided rng.
-    pub fn gen_keypair<R: RngCore + CryptoRng>(self, kem: id::KemId, rng: &mut R) -> Self {
+    pub fn gen_keypair<R: CryptoRng>(self, kem: id::KemId, rng: &mut R) -> Self {
         let mut ikm = [0u8; IKM_SIZE];
-        rng.fill(&mut ikm);
+        rng.fill_bytes(&mut ikm);
         self.gen_keypair_with(kem, &ikm)
     }
 
@@ -615,7 +614,7 @@ pub struct Ctx {
 
 impl Ctx {
     /// Used by the server side, encrypt a response.
-    pub fn encrypt_res<R: RngCore + CryptoRng>(&self, res: &[u8], rng: &mut R) -> Result<BytesMut> {
+    pub fn encrypt_res<R: CryptoRng>(&self, res: &[u8], rng: &mut R) -> Result<BytesMut> {
         crypt::encrypt_res(self.hdr, res, &self.encapped_key, &self.secret, rng)
     }
 

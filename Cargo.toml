@@ -2,7 +2,7 @@
 name = "aloha"
 version = "0.2.1"
 edition = "2021"
-rust-version = "1.63"
+rust-version = "1.89"
 license = "Apache-2.0"
 authors = ["Anbang Wen <anbang@cloudflare.com>"]
 description = "Low-level Rust implementation of Oblivious HTTP"
@@ -12,16 +12,17 @@ categories = ["network-programming", "cryptography"]
 include = ["/src", "README.md", "LICENSE"]
 
 [dependencies]
-aead = "0.5"
+aead = "0.6"
 bytes = "1.0"
-generic-array = "0.14"
-hkdf = "0.12"
-hpke = { version = "0.13", features = [ "std" ] }
-rand = { version = "0.9", features = [ "std_rng" ], default-features = false }
+hybrid-array = "0.4"
+hkdf = "0.13"
+hpke = { version = "0.15", features = [ "aes", "nistp", "x25519", "chacha", "alloc" ], default-features = false }
+rand = { version = "0.10", features = [ "std_rng" ], default-features = false }
+sha2 = "0.11"
 thiserror = "1.0"
 
 [dev-dependencies]
 hex-literal = "0.3"
-rand = { version = "0.9", features = [ "std_rng" ] }
+rand = { version = "0.10", features = [ "std_rng" ] }
 rstest = "0.16"
 x25519-dalek = "2"
